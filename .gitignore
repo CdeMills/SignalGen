@@ -1,0 +1,14 @@
+bin
+build
+dist
+include
+lib
+lib64
+data
+images
+.ipynb_checkpoints
+__pycache__
+pyvenv.cfg
+pip-selfcheck.json
+share
+src
