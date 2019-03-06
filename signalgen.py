@@ -39,8 +39,11 @@ else:
   gi.require_version('Gst', '1.0')
   gi.require_version('GdkPixbuf', '2.0')
   from gi.repository import GLib, Gst, Gdk, Gtk, GObject, GdkPixbuf
-  GObject.threads_init()
-  Gst.init(None)
+
+  gi.require_version('GstAudio', '1.0')
+  from gi.repository import GstAudio
+  AUDIO_FORMATS = [f.strip() for f in
+                   GstAudio.AUDIO_FORMATS_ALL.strip('{ }').split(',')]
 
 import time
 import struct
@@ -102,6 +105,80 @@ class Icon:
     "                                ",
     "                                "
   ]
+
+# source is https://github.com/gkralik/python-gst-tutorial/blob/master/basic-tutorial-6.py
+def print_field(field, value, pfx):
+  str = Gst.value_serialize(value)
+  print("{0:s}  {1:15s}: {2:s}".format(
+    pfx, GLib.quark_to_string(field), str))
+  return True
+  
+def print_caps(caps, pfx):
+  if not caps:
+    return
+    
+  if caps.is_any():
+    print("{0:s}ANY".format(pfx))
+    return
+    
+  if caps.is_empty():
+    print("{0:s}EMPTY".format(pfx))
+    return
+
+  for i in range(caps.get_size()):
+    structure = caps.get_structure(i)
+    print("{0:s}{1:s}".format(pfx, structure.get_name()))
+    structure.foreach(print_field, pfx)
+
+def print_pad_templates_information(factory):
+  print("Pad templates for {0:s}".format(factory.get_name()))
+  if factory.get_num_pad_templates() == 0:
+    print("  none")
+    return
+
+  pads = factory.get_static_pad_templates()
+  for pad in pads:
+    padtemplate = pad.get()
+
+    if pad.direction == Gst.PadDirection.SRC:
+      print("  SRC template:", padtemplate.name_template)
+    elif pad.direction == Gst.PadDirection.SINK:
+      print("  SINK template:", padtemplate.name_template)
+    else:
+      print("  UNKNOWN template:", padtemplate.name_template)
+
+    if padtemplate.presence == Gst.PadPresence.ALWAYS:
+      print("    Availability: Always")
+    elif padtemplate.presence == Gst.PadPresence.SOMETIMES:
+      print("    Availability: Sometimes")
+    elif padtemplate.presence == Gst.PadPresence.REQUEST:
+      print("    Availability: On request")
+    else:
+      print("    Availability: UNKNOWN")
+
+    if padtemplate.get_caps():
+      print("    Capabilities:")
+      print_caps(padtemplate.get_caps(), "      ")
+
+  print("")
+
+# shows the current capabilities of the requested pad in the given element
+def print_pad_capabilities(element, pad_name):
+  # retrieve pad
+  pad = element.get_static_pad(pad_name)
+  if not pad:
+    print("ERROR: Could not retrieve pad '{0:s}'".format(pad_name))
+    return
+    
+  # retrieve negotiated caps (or acceptable caps if negotiation is not
+  # yet finished)
+  caps = pad.get_current_caps()
+  if not caps:
+    caps = pad.get_allowed_caps()
+    
+  # print
+  print("Caps for the {0:s} pad:".format(pad_name))
+  print_caps(caps, "      ")
 
 # this should be a temporary hack
 
@@ -195,15 +272,15 @@ class ConfigManager:
     setattr(obj,'datalist',data)
 
 class TextEntryController:
-  def __init__(self,parent,widget):
+  def __init__(self, parent, widget):
     self.par = parent
     self.widget = widget
-    widget.connect('scroll-event',self.scroll_event)
+    widget.connect('scroll-event', self.scroll_event)
     widget.set_tooltip_text('Enter number or:\n\
     Mouse wheel: increase,decrease\n\
     Shift/Ctrl/Alt: faster change')
 
-  def scroll_event(self,w,evt):
+  def scroll_event(self, w, evt):
     q = (-1,1)[evt.direction == gtk.gdk.SCROLL_UP]
     # magnify change if shift,ctrl,alt pressed
     for m in (1,2,4):
@@ -226,6 +303,10 @@ class SignalGen:
     # exit correctly on system signals
     signal.signal(signal.SIGTERM, self.close)
     signal.signal(signal.SIGINT, self.close)
+    # is seeking enabled for this media?
+    self.seek_enabled = False
+    # have we performed the seek already?
+    self.seek_done = False
     # precompile struct operator
     self.struct_int = struct.Struct('i')
     self.max_level = (2.0**31)-1
@@ -245,7 +326,8 @@ class SignalGen:
       self.sig_color = Gdk.color_parse('#40c040')
       self.mod_color = Gdk.color_parse('#4040c0')
       self.noise_color = Gdk.color_parse('#c040c0')
-    self.pipeline = False
+    self.player = None
+    self.bus = None
     self.count = 0
     self.imod = 0
     self.rate = 1
@@ -320,12 +402,12 @@ class SignalGen:
       'NoiseLevel' : self.k_noise_level_entry,
       'OutputEnabled' : self.k_enable_checkbutton,
     }
-    self.cm = ConfigManager(self.config_file,self.config_data)
-    self.cm.load_combobox(self.k_sig_waveform_combobox,self.waveform_strings)
+    self.cm = ConfigManager(self.config_file, self.config_data)
+    self.cm.load_combobox(self.k_sig_waveform_combobox, self.waveform_strings)
     self.k_sig_waveform_combobox.set_active(self.sig_waveform)
-    self.cm.load_combobox(self.k_mod_waveform_combobox,self.waveform_strings)
+    self.cm.load_combobox(self.k_mod_waveform_combobox, self.waveform_strings)
     self.k_mod_waveform_combobox.set_active(self.mod_waveform)
-    self.cm.load_combobox(self.k_sample_rate_combobox,self.sample_rates)
+    self.cm.load_combobox(self.k_sample_rate_combobox, self.sample_rates)
     self.k_sample_rate_combobox.set_active(self.sample_rate)
     self.k_sig_freq_entry.set_text(self.format_num(self.sig_freq))
     self.k_sig_level_entry.set_text(self.format_num(self.sig_level))
@@ -333,37 +415,37 @@ class SignalGen:
     self.k_mod_level_entry.set_text(self.format_num(self.mod_level))
     self.k_noise_level_entry.set_text(self.format_num(self.noise_level))
     if 0:
-      self.k_main_viewport_border.modify_bg(gtk.STATE_NORMAL,self.main_color)
-      self.k_sig_viewport_border.modify_bg(gtk.STATE_NORMAL,self.sig_color)
-      self.k_mod_viewport_border.modify_bg(gtk.STATE_NORMAL,self.mod_color)
-      self.k_noise_viewport_border.modify_bg(gtk.STATE_NORMAL,self.noise_color)
+      self.k_main_viewport_border.modify_bg(gtk.STATE_NORMAL, self.main_color)
+      self.k_sig_viewport_border.modify_bg(gtk.STATE_NORMAL, self.sig_color)
+      self.k_mod_viewport_border.modify_bg(gtk.STATE_NORMAL, self.mod_color)
+      self.k_noise_viewport_border.modify_bg(gtk.STATE_NORMAL, self.noise_color)
     else:
-      self.k_main_viewport_border.modify_bg(Gtk.StateFlags.NORMAL,self.main_color)
-      self.k_sig_viewport_border.modify_bg(Gtk.StateFlags.NORMAL,self.sig_color)
-      self.k_mod_viewport_border.modify_bg(Gtk.StateFlags.NORMAL,self.mod_color)
-      self.k_noise_viewport_border.modify_bg(Gtk.StateFlags.NORMAL,self.noise_color)
-    self.sig_freq_cont = TextEntryController(self,self.k_sig_freq_entry)
-    self.sig_level_cont = TextEntryController(self,self.k_sig_level_entry)
-    self.mod_freq_cont = TextEntryController(self,self.k_mod_freq_entry)
-    self.mod_level_cont = TextEntryController(self,self.k_mod_level_entry)
-    self.noise_level_cont = TextEntryController(self,self.k_noise_level_entry)
-    self.k_mainwindow.connect('key-press-event',self.key_event)
-    self.k_mainwindow.connect('key-release-event',self.key_event)
-    self.k_enable_checkbutton.connect('toggled',self.update_values)
-    self.k_sig_freq_entry.connect('changed',self.update_entry_values)
-    self.k_sig_level_entry.connect('changed',self.update_entry_values)
-    self.k_sig_enable_checkbutton.connect('toggled',self.update_checkbutton_values)
-    self.k_mod_freq_entry.connect('changed',self.update_entry_values)
-    self.k_mod_level_entry.connect('changed',self.update_entry_values)
-    self.k_noise_level_entry.connect('changed',self.update_entry_values)
-    self.k_sample_rate_combobox.connect('changed',self.update_values)
-    self.k_sig_waveform_combobox.connect('changed',self.update_values)
-    self.k_mod_waveform_combobox.connect('changed',self.update_values)
-    self.k_left_checkbutton.connect('toggled',self.update_checkbutton_values)
-    self.k_right_checkbutton.connect('toggled',self.update_checkbutton_values)
-    self.k_mod_enable_checkbutton.connect('toggled',self.update_checkbutton_values)
-    self.k_noise_enable_checkbutton.connect('toggled',self.update_checkbutton_values)
-    self.k_mod_am_radiobutton.connect('toggled',self.update_checkbutton_values)
+      self.k_main_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.main_color)
+      self.k_sig_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.sig_color)
+      self.k_mod_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.mod_color)
+      self.k_noise_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.noise_color)
+    self.sig_freq_cont = TextEntryController(self, self.k_sig_freq_entry)
+    self.sig_level_cont = TextEntryController(self, self.k_sig_level_entry)
+    self.mod_freq_cont = TextEntryController(self, self.k_mod_freq_entry)
+    self.mod_level_cont = TextEntryController(self, self.k_mod_level_entry)
+    self.noise_level_cont = TextEntryController(self, self.k_noise_level_entry)
+    self.k_mainwindow.connect('key-press-event', self.key_event)
+    self.k_mainwindow.connect('key-release-event', self.key_event)
+    self.k_enable_checkbutton.connect('toggled', self.update_values)
+    self.k_sig_freq_entry.connect('changed', self.update_entry_values)
+    self.k_sig_level_entry.connect('changed', self.update_entry_values)
+    self.k_sig_enable_checkbutton.connect('toggled', self.update_checkbutton_values)
+    self.k_mod_freq_entry.connect('changed', self.update_entry_values)
+    self.k_mod_level_entry.connect('changed', self.update_entry_values)
+    self.k_noise_level_entry.connect('changed', self.update_entry_values)
+    self.k_sample_rate_combobox.connect('changed', self.update_values)
+    self.k_sig_waveform_combobox.connect('changed', self.update_values)
+    self.k_mod_waveform_combobox.connect('changed', self.update_values)
+    self.k_left_checkbutton.connect('toggled', self.update_checkbutton_values)
+    self.k_right_checkbutton.connect('toggled', self.update_checkbutton_values)
+    self.k_mod_enable_checkbutton.connect('toggled', self.update_checkbutton_values)
+    self.k_noise_enable_checkbutton.connect('toggled', self.update_checkbutton_values)
+    self.k_mod_am_radiobutton.connect('toggled', self.update_checkbutton_values)
     self.cm.read_config()
     self.update_entry_values()
     self.update_checkbutton_values()
@@ -372,32 +454,32 @@ class SignalGen:
   def format_num(self,v):
     return "%.2f" % v
 
-  def get_widget_text(self,w):
+  def get_widget_text(self, w):
     typ = type(w)
     if(typ == Gtk.ComboBox):
       return w.get_active_text()
     elif(typ == Gtk.Entry):
       return w.get_text()
 
-  def get_widget_num(self,w):
+  def get_widget_num(self, w):
     try:
       return float(self.get_widget_text(w))
     except:
       return 0.0
 
-  def restart_test(self,w,pv):
+  def restart_test(self, w, pv):
     nv = w.get_active()
     self.restart |= (nv != pv)
     return nv
     
-  def update_entry_values(self,*args):
+  def update_entry_values(self, *args):
     self.sig_freq = self.get_widget_num(self.k_sig_freq_entry)
     self.sig_level = self.get_widget_num(self.k_sig_level_entry) / 100.0
     self.mod_freq = self.get_widget_num(self.k_mod_freq_entry)
     self.mod_level = self.get_widget_num(self.k_mod_level_entry) / 100.0
     self.noise_level = self.get_widget_num(self.k_noise_level_entry) / 100.0
     
-  def update_checkbutton_values(self,*args):
+  def update_checkbutton_values(self, *args):
     self.left_audio = self.k_left_checkbutton.get_active()
     self.right_audio = self.k_right_checkbutton.get_active()
     self.mod_enable = self.k_mod_enable_checkbutton.get_active()
@@ -405,39 +487,45 @@ class SignalGen:
     self.mod_mode = (SignalGen.M_FM,SignalGen.M_AM)[self.k_mod_am_radiobutton.get_active()]
     self.noise_enable = self.k_noise_enable_checkbutton.get_active()
     
-  def update_values(self,*args):
+  def update_values(self, *args):
     self.restart = (not self.sig_function)
     self.sample_rate = self.restart_test(self.k_sample_rate_combobox, self.sample_rate)
-    self.enable = self.restart_test(self.k_enable_checkbutton,self.enable)
+    self.enable = self.restart_test(self.k_enable_checkbutton, self.enable)
     self.mod_waveform = self.k_mod_waveform_combobox.get_active()
     self.mod_function = self.gen_functions[self.mod_waveform]
     self.sig_waveform = self.k_sig_waveform_combobox.get_active()
     self.sig_function = self.gen_functions[self.sig_waveform]
     self.k_sample_rate_combobox.set_sensitive(not self.enable)
-    if(self.restart):
+    if (self.restart):
       self.init_audio()
       
-  def make_and_chain(self,name):
+  def make_and_chain(self, varname, srcname=None):
     if 0:
-      target = gst.element_factory_make(name)
+      target = gst.element_factory_make(varname)
     else:
-      target = Gst.ElementFactory.make(name)
+      target = Gst.ElementFactory.find(srcname)
+      print("From inside make_and_chain")
+      print_pad_templates_information(target) 
+      target = Gst.ElementFactory.make(srcname, varname)
+    if target is None:
+      raise ValueError(srcname + ' is not a valid plugin')
+
     self.chain.append(target)
     return target
 
   def unlink_gst(self):
-    if(self.pipeline):
+    if(self.player):
       if 0:
-        self.pipeline.set_state(gst.STATE_NULL)
-        self.pipeline.remove_many(*self.chain)
+        self.player.set_state(gst.STATE_NULL)
+        self.player.remove_many(*self.chain)
         gst.element_unlink_many(*self.chain)
       else:
-        self.pipeline.set_state(Gst.State.NULL)
+        self.player.set_state(Gst.State.NULL)
         for src in self.chain[::-1]:
-          self.pipeline.remove(src)
+          self.player.remove(src)
       for item in self.chain:
         item = False
-      self.pipeline = False
+      self.player = None
       time.sleep(0.01)
 
   def init_audio(self):
@@ -445,37 +533,77 @@ class SignalGen:
     if(self.enable):
       self.chain = []
       if 0:
-        self.pipeline = gst.Pipeline("mypipeline")
+        self.player = gst.Pipeline("mypipeline")
       else:
-        self.pipeline = Gst.Pipeline("mypipeline")
-      self.source = self.make_and_chain("appsrc")
-      rs = SignalGen.sample_rates[self.sample_rate]
+        self.player = Gst.Pipeline.new("player") 
+      self.source = self.make_and_chain("appsrc", "appsrc")
+      if not self.source:
+        print("ERROR: Could not create '{0}' element".format('appsrc'))
+        sys.exit(1)
+      self.source.set_property ("is-live", True)      
+      rs = int(SignalGen.sample_rates[self.sample_rate])
       self.rate = float(rs)
       self.interval = 1.0 / self.rate
-      caps = Gst.Caps(
-      'audio/x-raw,'
-      'endianness=(int)1234,'
-      'channels=(int)2,'
-      'width=(int)32,'
-      'depth=(int)32,'
-      'signed=(boolean)true,'
-      'rate=(int)%s' % rs)
-      self.source.set_property('caps', caps)
-      self.sink = self.make_and_chain("autoaudiosink")
       if 0:
-        self.pipeline.add(*self.chain)
+        caps = gst.Caps(
+          'audio/x-raw-int,'
+          'endianness=(int)1234,'
+          'channels=(int)2,'
+          'width=(int)32,'
+          'depth=(int)32,'
+          'signed=(boolean)true,'
+          'rate=(int)%s' % rs)
+      else:
+      # see https://gstreamer.freedesktop.org/documentation/design/mediatype-audio-raw.html
+      # https://stackoverflow.com/questions/2380575/what-is-the-gstreamer-caps-syntax
+        caps = Gst.Caps.from_string(
+          "audio/x-raw," +
+          "format= (string)S32LE," +
+          "channels= (int)2," +
+          "layout= (string)Interleaved," +
+          "rate= (int)%s " % rs)
+        print("init_audio: set src cap")
+        print_caps(caps, "  ")
+
+      self.source.set_property('caps', caps)
+      self.source.connect('need-data', self.need_data)      
+      if 0:
+        self.sink = self.make_and_chain("autoaudiosink")
+        self.player.add(*self.chain)
         gst.element_link_many(*self.chain)
       else:
+        self.sink = self.make_and_chain("sink", "autoaudiosink")
+        # add all elements to the player
         for src in self.chain:
-          self.pipeline.add(src)
+          self.player.add(src)
+        # link elements two-by-two
         for src, dest in zip(self.chain[:-1], self.chain[1:]):
-          src.link(dest)
-      self.source.connect('need-data', self.need_data)
-      if 0:
-        self.pipeline.set_state(gst.STATE_PLAYING)
-      else:
-        self.pipeline.set_state(Gst.State.PLAYING)
+          if not src.link(dest):
+            print("ERROR: Could not link {0:s} to {1:s}".format(src, dest))
+            return -1
+      
+      # print initial negotiated caps (in NULL state)
+      print("In NULL state:")
+      print(self.sink)
+      print_pad_capabilities(self.sink, "sink")
 
+      self.bus = self.player.get_bus()
+      self.bus.add_signal_watch()
+      self.bus.enable_sync_message_emission ()
+      self.bus.connect('message', self.on_message)
+      if 0:
+        self.player.set_state(gst.STATE_PLAYING)
+      else:
+        ret = self.player.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+          print("ERROR: Unable to set the pipeline to the playing state")
+          sys.exit(1)
+        print('enabled the output player')
+    else:
+      if self.player:
+        self.player.set_state(Gst.State.NULL)
+    
+    
   def key_event(self,w,evt):
     if 0:
       cn = gtk.gdk.keyval_name(evt.keyval)
@@ -489,10 +617,30 @@ class SignalGen:
       mod = 4
     else:
       return
-    if(evt.type == Gdk.KEY_PRESS): # was gtk.gdk.KEY_PRESS
+    if(evt.type == Gdk.Event.KEY_PRESS): # was gtk.gdk.KEY_PRESS
       self.mod_key_val |= mod
     else:
       self.mod_key_val &= ~mod
+
+  def on_message(self, bus, message):
+    t = message.type
+    if t == Gst.MessageType.EOS:
+      print("End-Of-Stream reached")
+      self.player.set_state(Gst.State.NULL)
+    elif t == Gst.MessageType.ERROR:
+      self.player.set_state(Gst.State.NULL)
+      err, debug = message.parse_error()
+      print("ERROR:", message.src.get_name(), ":", err)
+      if debug:
+        print("Debug info:", debug)
+    elif t == Gst.MessageType.STATE_CHANGED:
+      old_state, new_state, pending_state = message.parse_state_changed()
+      if message.src == self.source:
+        print("Pipeline state changed from '{0:s}' to '{1:s}'".format(
+          Gst.Element.state_get_name(old_state),
+          Gst.Element.state_get_name(new_state)))
+        print(self.sink)
+        print_pad_capabilities(self.sink, "sink")
 
   def sine_function(self,t,f):
     return math.sin(2.0*math.pi*f*t)
@@ -510,7 +658,8 @@ class SignalGen:
   def sawtooth_function(self,t,f):
     return 2.0*math.fmod((t*f)+0.5,1.0)-1.0
 
-  def need_data(self,src,length):
+  def need_data(self, src, length):
+    print("received a request for {0} elems".format(length))
     if 0:    
       bytes = ""
     else:
@@ -520,16 +669,17 @@ class SignalGen:
     for tt in range(ld2):
       t = (self.count + tt) * self.interval
       if(not self.mod_enable):
-        datum = self.sig_function(t,self.sig_freq)
+        datum = self.sig_function(t, self.sig_freq)
+        # DEBUG print("datum is {0}".format(datum))
       else:
-        mod = self.mod_function(t,self.mod_freq)
+        mod = self.mod_function(t, self.mod_freq)
         # AM mode
         if(self.mod_mode == SignalGen.M_AM):
-          datum = 0.5 * self.sig_function(t,self.sig_freq) * (1.0 + (mod * self.mod_level))
+          datum = 0.5 * self.sig_function(t, self.sig_freq) * (1.0 + (mod * self.mod_level))
         # FM mode
         else:
           self.imod += (mod * self.mod_level * self.interval)
-          datum = self.sig_function(t+self.imod,self.sig_freq)
+          datum = self.sig_function(t+self.imod, self.sig_freq)
       v = 0
       if(self.sig_enable):
         v += (datum * self.sig_level)
@@ -539,13 +689,16 @@ class SignalGen:
       v *= self.max_level
       v = max(-self.max_level,v)
       v = min(self.max_level,v)
-      left  = (0,v)[self.left_audio]
-      right = (0,v)[self.right_audio]
-      bytes += self.struct_int.pack(int(left))
-      bytes += self.struct_int.pack(int(right))
+      # DEBUG print("generated signal is {0}".format(v))
+      left  = round((0, v)[self.left_audio])
+      right = round((0, v)[self.right_audio])
+      # DEBUG print("Pushing ({0}, {1})".format(left, right))
+      bytes.extend(list(self.struct_int.pack(left)) +
+                   list(self.struct_int.pack(right)))
     self.count += ld2
-    src.emit('push-buffer', Gst.Buffer.new_wrapped(bytes))
-    
+    resu = src.emit('push-buffer', Gst.Buffer.new_wrapped(bytes))
+    print('src.emit returned {0}'.format(resu))
+
   def launch_help(self,*args):
     webbrowser.open("http://arachnoid.com/python/signalgen_program.html")
 
@@ -554,5 +707,7 @@ class SignalGen:
     self.cm.write_config()
     Gtk.main_quit()
 
+Gst.init(None)
+GObject.threads_init()
 app=SignalGen()
 Gtk.main()
