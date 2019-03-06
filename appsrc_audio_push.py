@@ -4,14 +4,17 @@
 # source is https://gist.github.com/thomasfillon/a63553d85f010bc75b86
 
 # equivalent effect:
-# gst-launch-1.0 filesrc location=bird-calls.wav ! wavparse \  
+# gst-launch-1.0 filesrc location=bird-calls.wav ! wavparse \
 # ! audioconvert ! audioresample ! alsasink
 
+# gst-launch-1.0 filesrc location=file.pcm ! audio/x-raw,format=S16BE,channels=2,rate=48000 \
+# ! audioconvert ! audioresample ! autoaudiosink
+import sys
 import gi
 
 gi.require_version('Gst', '1.0')
 gi.require_version('Gtk', "3.0")
-from gi.repository import GLib, GObject, Gst, Gtk
+from gi.repository import GObject, GLib, Gst
 
 import numpy
 import threading
@@ -30,73 +33,75 @@ mainloop = GLib.MainLoop()
 mainloop_thread.mainloop = mainloop
 mainloop_thread.run = mainloop_thread.mainloop.run
 
-pipeline = Gst.Pipeline.new("pipeline")
 
-buffer_size = 4096
-num_buffer = 10
-array = ((2**28-1)*numpy.random.randn(num_buffer * buffer_size, 1)).astype('<i4')
-appsrc = Gst.ElementFactory.make('appsrc', 'appsrc')
+class Appsrc():
+    # pipeline = Gst.Pipeline.new("pipeline")
+    PIPELINE_SIMPLE = "appsrc name=appsrc do-timestamp=true ! audio/x-raw,format=S16BE,channels=2,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
 
-capstr = """audio/x-raw-float,
-            width=32,
-            depth=32,
-            endianness=1234,
-            rate=16000,
-            channels=1"""
-capstr = """audio/x-raw,
-        format=(string)S32LE,
-        channels = (int)1,
-        rate = (int)16000"""
-caps = Gst.caps_from_string(capstr)
-print(caps)
-appsrc.set_property("caps", caps)
-appsrc.set_property("emit-signals", True)
+    def __init__(self):
+        self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
 
-converter = Gst.ElementFactory.make('audioconvert', 'converter')
-encoder = Gst.ElementFactory.make('lame', 'encoder')
+        self.buffer_size = 4096
+        self.num_buffer = 10
+        self.array = ((2**28-1)*numpy.random.randn(self.num_buffer
+                                                   * self.buffer_size, 1)).astype('<i4')
+        self.needs_update = None
+        self.the_buf = 0
 
-filesink = Gst.ElementFactory.make('filesink', 'sink')
-filesink.set_property('location', '/tmp/test.mp3')
-audiosink = Gst.ElementFactory.make('autoaudiosink', 'audiosink')
+        bus = self.pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect("message::eos", self._on_eos_cb)
+        bus.connect("message::error", self._on_error_cb)
 
-# pipeline.add(appsrc, converter, encoder, filesink)
-# Gst.element_link_many(appsrc, converter, encoder, filesink)
-pipeline.add(appsrc)
-pipeline.add(audiosink)
-appsrc.link(audiosink)
+        # appsrc = Gst.ElementFactory.make('appsrc', 'appsrc')
+        self.appsrc = self.pipeline.get_by_name("appsrc")
+        self.appsrc.connect('need-data', self._on_need_buffer)
 
+        self.buffer = None
+        self.buffer = Gst.Buffer.new_allocate(None, self.buffer_size * 4, None)
+        self.needs_update = True
+        self.time = 0
 
-def on_eos_cb(bus, msg):
-    """Calback on End-Of-Stream message"""
-    mainloop.quit()
-    pipeline.set_state(Gst.State.NULL)
+    def start(self):
+        """ zut """
+        self.pipeline.set_state(Gst.State.PLAYING)
 
+    def stop(self):
+        """ flute """
+        self.pipeline.set_state(Gst.State.PAUSED)
 
-def on_error_cb(bus, msg):
-    """Calback on Error message"""
-    err, debug_info = msg.parse_error()
-    print ("Error received from element %s: %s" % (msg.src.get_name(),
-                                                   err))
-    print ("Debugging information: %s" % debug_info)
-    mainloop.quit()
+    def _on_need_buffer(self, source, arg0):
+        """ Fichtre """
+        if self.needs_update:
+            self.needs_update = self.the_buf < self.num_buffer
+            print('push %d/%d' % (self.the_buf, self.num_buffer))
+            toto = self.array[self.the_buf*self.buffer_size:(self.the_buf+1)*self.buffer_size]
+            self.buffer.fill(0, toto.tobytes())
+            source.emit("push-buffer", self.buffer)
+            self.the_buf += 1
 
-pipeline.set_state(Gst.State.PLAYING)
+    def _on_eos_cb(self, bus, msg):
+        """Calback on End-Of-Stream message"""
+        # mainloop.quit()
+        self.pipeline.set_state(Gst.State.NULL)
 
-bus = pipeline.get_bus()
-bus.add_signal_watch()
-bus.connect('message::eos', on_eos_cb)
-bus.connect("message::error", on_error_cb)
+    def _on_error_cb(self, bus, msg):
+        """Calback on Error message"""
+        err, debug_info = msg.parse_error()
+        print("Error received from element %s: %s" % (msg.src.get_name(),
+                                                      err))
+        print("Debugging information: %s" % debug_info)
+        # mainloop.quit()
 
-mainloop_thread.start()
+if __name__ == "__main__":
+    Gst.init(sys.argv)
+    GObject.threads_init()
+    appsrc = Appsrc()
 
-for k in range(1, num_buffer+1):
-    print('push %d/%d' % (k, num_buffer))
-    # buf = Gst.Buffer(array[k*buffer_size:(k+1)*buffer_size])
-    # toto = array[k*buffer_size:(k+1)*buffer_size].view('uint8')
-    toto = array[k*buffer_size:(k+1)*buffer_size].tobytes()
-    # print('pushing {0} elems'.format(len(toto)))
-    buf = Gst.Buffer.new_allocate(None, buffer_size, None)
-    buf.fill(0, toto)
-    samples =  Gst.Sample.new(buf, caps, None, None)
-    # buf = Gst.Buffer.new_wrapped(array[k*buffer_size:(k+1)*buffer_size].view("uint8"))
-    appsrc.emit("push-sample", samples)
+    loop = GObject.MainLoop()
+    appsrc.start()
+    try:
+        loop.run()
+    except KeyboardInterrupt:
+        loop.quit()
+    appsrc.stop()
