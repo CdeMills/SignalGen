@@ -307,6 +307,9 @@ class SignalGen:
     self.seek_enabled = False
     # have we performed the seek already?
     self.seek_done = False
+    self.source = None
+    self.sink = None
+    self.is_push_buffer_allowed = None
     # precompile struct operator
     self.struct_int = struct.Struct('i')
     self.max_level = (2.0**31)-1
@@ -556,17 +559,22 @@ class SignalGen:
       else:
       # see https://gstreamer.freedesktop.org/documentation/design/mediatype-audio-raw.html
       # https://stackoverflow.com/questions/2380575/what-is-the-gstreamer-caps-syntax
-        caps = Gst.Caps.from_string(
+        self.caps = Gst.Caps.from_string(
           "audio/x-raw," +
           "format= (string)S32LE," +
           "channels= (int)2," +
           "layout= (string)Interleaved," +
           "rate= (int)%s " % rs)
         print("init_audio: set src cap")
-        print_caps(caps, "  ")
+        print_caps(self.caps, "  ")
 
-      self.source.set_property('caps', caps)
-      self.source.connect('need-data', self.need_data)      
+      # this must be done for each buffer
+      # self.source.set_property('caps', caps)
+      self.source.connect('need-data', self.need_data)   
+      self.source.connect('enough-data', self.enough_data)   
+      self.source.set_property('format', 'time')
+      self.source.set_property('do-timestamp', True)
+      
       if 0:
         self.sink = self.make_and_chain("autoaudiosink")
         self.player.add(*self.chain)
@@ -598,6 +606,9 @@ class SignalGen:
         if ret == Gst.StateChangeReturn.FAILURE:
           print("ERROR: Unable to set the pipeline to the playing state")
           sys.exit(1)
+        # print the current capabilities of the sink
+        print("init_audio: set state to PLAYING")
+        print_pad_capabilities(self.sink, "sink")
         print('enabled the output player')
     else:
       if self.player:
@@ -660,6 +671,8 @@ class SignalGen:
 
   def need_data(self, src, length):
     print("received a request for {0} elems".format(length))
+    self.is_push_buffer_allowed = True
+
     if 0:    
       bytes = ""
     else:
@@ -696,8 +709,17 @@ class SignalGen:
       bytes.extend(list(self.struct_int.pack(left)) +
                    list(self.struct_int.pack(right)))
     self.count += ld2
-    resu = src.emit('push-buffer', Gst.Buffer.new_wrapped(bytes))
-    print('src.emit returned {0}'.format(resu))
+    buffer = Gst.Buffer.new_wrapped(bytes)
+    # Create GstSample
+    samples =  Gst.Sample.new(buffer, self.caps, None, None)
+    gst_flow_return = src.emit('push-sample', samples)
+    if gst_flow_return != Gst.FlowReturn.OK:
+      print('We got some error, stop sending data')
+    else:
+      print('src.emit returned {0}'.format(gst_flow_return))
+
+  def enough_data(self, src):
+    self.is_push_buffer_allowed = False
 
   def launch_help(self,*args):
     webbrowser.open("http://arachnoid.com/python/signalgen_program.html")
