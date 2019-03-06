@@ -3,26 +3,30 @@
 
 # source is https://gist.github.com/thomasfillon/a63553d85f010bc75b86
 
+# equivalent effect:
+# gst-launch-1.0 filesrc location=bird-calls.wav ! wavparse \  
+# ! audioconvert ! audioresample ! alsasink
+
 import gi
 
 gi.require_version('Gst', '1.0')
 gi.require_version('Gtk', "3.0")
-from gi.repository import GObject, Gst, Gtk
+from gi.repository import GLib, GObject, Gst, Gtk
 
 import numpy
 import threading
 
 
 # Initialize gobject in a threading environment
-GObject.threads_init()
+# GObject.threads_init()
 Gst.init(None)
 
 # GStreamer main loop
-mainloop = GObject.MainLoop()
+# mainloop = GLib.MainLoop()
 
 # Threading is needed to "push" buffer outside the gstreamer mainloop
 mainloop_thread = threading.Thread()
-mainloop = GObject.MainLoop()
+mainloop = GLib.MainLoop()
 mainloop_thread.mainloop = mainloop
 mainloop_thread.run = mainloop_thread.mainloop.run
 
