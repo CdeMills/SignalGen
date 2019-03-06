@@ -36,7 +36,7 @@ mainloop_thread.run = mainloop_thread.mainloop.run
 
 class Appsrc():
     # pipeline = Gst.Pipeline.new("pipeline")
-    PIPELINE_SIMPLE = "appsrc name=appsrc do-timestamp=true ! audio/x-raw,format=S16BE,channels=2,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
+    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! autoaudiosink"
 
     def __init__(self):
         self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
