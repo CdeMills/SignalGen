@@ -16,7 +16,7 @@ gi.require_version('Gst', '1.0')
 gi.require_version('Gtk', "3.0")
 from gi.repository import GObject, GLib, Gst
 
-import numpy
+import numpy as np
 import threading
 
 
@@ -36,15 +36,23 @@ mainloop_thread.run = mainloop_thread.mainloop.run
 
 class Appsrc():
     # pipeline = Gst.Pipeline.new("pipeline")
-    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! autoaudiosink"
+    # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! autoaudiosink"
+    # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=1,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
+    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S16BE,channels=1,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
+    # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=F32BE,channels=1,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
 
     def __init__(self):
         self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
 
         self.buffer_size = 4096
         self.num_buffer = 10
-        self.array = ((2**28-1)*numpy.random.randn(self.num_buffer
-                                                   * self.buffer_size, 1)).astype('<i4')
+        self.dt = 1.0/48000
+        print(self.dt)
+        self.arrayn = (1.0e-3*np.random.randn(self.num_buffer
+                                                   * self.buffer_size, 1)).astype('<f4')
+        npts = self.num_buffer * self.buffer_size
+        self.array = ((2**12-1)*np.sin(2*np.pi*3400*np.linspace(0, npts, npts, endpoint=False)*self.dt)).astype('<i2')
+        ##    self.array = (1.0e-3*np.sin(2*np.pi*1200*np.linspace(0, npts, npts, endpoint=False)*self.dt)).astype('<f4')
         self.needs_update = None
         self.the_buf = 0
 
