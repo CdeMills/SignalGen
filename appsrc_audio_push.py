@@ -18,7 +18,7 @@ from gi.repository import GObject, GLib, Gst
 
 import numpy as np
 import threading
-
+import matplotlib.pyplot as plt
 
 # Initialize gobject in a threading environment
 # GObject.threads_init()
@@ -38,7 +38,7 @@ class Appsrc():
     # pipeline = Gst.Pipeline.new("pipeline")
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! autoaudiosink"
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=1,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
-    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S16BE,channels=1,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
+    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,layout=interleaved,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=F32BE,channels=1,rate=48000 ! audioconvert ! audioresample ! autoaudiosink"
 
     def __init__(self):
@@ -50,8 +50,10 @@ class Appsrc():
         print(self.dt)
         self.arrayn = (1.0e-3*np.random.randn(self.num_buffer
                                                    * self.buffer_size, 1)).astype('<f4')
-        npts = self.num_buffer * self.buffer_size
-        self.array = ((2**12-1)*np.sin(2*np.pi*3400*np.linspace(0, npts, npts, endpoint=False)*self.dt)).astype('<i2')
+        self.npts = self.num_buffer * self.buffer_size
+        sine = ((2**12-1)*np.sin(2*np.pi*3400*np.linspace(0, self.npts, self.npts, endpoint=False)*self.dt)).astype('<i4')
+        # generate two rows and emit as x(:)
+        self.array = np.vstack((sine, sine)).flatten('F')
         ##    self.array = (1.0e-3*np.sin(2*np.pi*1200*np.linspace(0, npts, npts, endpoint=False)*self.dt)).astype('<f4')
         self.needs_update = None
         self.the_buf = 0
@@ -81,12 +83,12 @@ class Appsrc():
     def _on_need_buffer(self, source, arg0):
         """ Fichtre """
         if self.needs_update:
-            self.needs_update = self.the_buf < self.num_buffer
-            print('push %d/%d' % (self.the_buf, self.num_buffer))
+            print('push %d/%d' % (1+self.the_buf, self.num_buffer))
             toto = self.array[self.the_buf*self.buffer_size:(self.the_buf+1)*self.buffer_size]
             self.buffer.fill(0, toto.tobytes())
             source.emit("push-buffer", self.buffer)
             self.the_buf += 1
+            self.needs_update = self.the_buf < self.num_buffer
 
     def _on_eos_cb(self, bus, msg):
         """Calback on End-Of-Stream message"""
@@ -101,6 +103,11 @@ class Appsrc():
         print("Debugging information: %s" % debug_info)
         # mainloop.quit()
 
+    def get_data(self):
+        """ Return the internal buffer"""
+        return (self.npts, self.dt, self.array)
+
+
 if __name__ == "__main__":
     Gst.init(sys.argv)
     GObject.threads_init()
@@ -112,4 +119,24 @@ if __name__ == "__main__":
         loop.run()
     except KeyboardInterrupt:
         loop.quit()
+
+    npts, dt, resu = appsrc.get_data()
+    resu = resu/(2**31 - 1)
+
+    x = np.linspace(0, npts, npts, endpoint=False)*dt
+
+    # compare with output.raw
+    wav = np.fromfile('output.raw', dtype='<i4', count=-1)
+    wav = wav / (2**31 - 1)
+
+    import pdb; pdb.set_trace()
+    plt.subplot(2, 1, 1)
+    markers_on = np.linspace(0, npts, 10, endpoint=False).astype('i4')
+    plt.plot(x, resu, '-bD', markevery=markers_on)
+    plt.ylabel("Generated from Appsrc")
+    plt.subplot(2, 1, 2)
+    plt.plot(x, wav)
+    plt.ylabel("Sent to audio")
+    plt.show()
+
     appsrc.stop()
