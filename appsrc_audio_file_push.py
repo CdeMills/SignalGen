@@ -36,19 +36,19 @@ mainloop_thread.run = mainloop_thread.mainloop.run
 
 class Appsrc():
     # pipeline = Gst.Pipeline.new("pipeline")
-    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! filesink location=output.raw"
+#    PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! filesink location=output.raw"
     PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert ! audioresample ! autoaudiosink"
 
     def __init__(self):
         self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
 
         self.buffer_size = 4096
-        self.num_buffer = 20
+        self.num_buffer = 64
         self.arrayn = ((2**28-1)*np.random.randn(self.num_buffer
                                                  * self.buffer_size, 1)).astype('<i4')
         self.npts = self.num_buffer * self.buffer_size
         self.dt = 1.0/48000
-        self.array = ((2**28-1)*np.sin((2*np.pi*50*self.dt) *
+        self.array = ((2**28-1)*np.sin((2*np.pi*412*self.dt) *
                                        np.linspace(0, self.npts, self.npts, endpoint=False))).astype('<i4')
         self.needs_update = None
         self.the_buf = 0

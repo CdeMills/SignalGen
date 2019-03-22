@@ -324,7 +324,7 @@ class SignalGen:
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=1,rate=48000 ! "
     # + "audioconvert ! audioresample ! autoaudiosink"
     PIPELINE_SIMPLE = "appsrc name=appsrc !" + \
-                      " audio/x-raw,format=S32BE,channels=2,layout=interleaved,rate=48000 !" + \
+                      " audio/x-raw,format=S32BE,channels=2,layout=interleaved,rate={0} !" + \
                       " audioconvert ! audioresample ! autoaudiosink"
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=F32BE,channels=1,rate=48000 ! " +
     # "audioconvert ! audioresample ! autoaudiosink"
@@ -338,17 +338,17 @@ class SignalGen:
         self.seek_enabled = False
         # have we performed the seek already?
         self.seek_done = False
-        self.source = None
-        self.sink = None
+        # self.source = None
+        # self.sink = None
         self.is_push_buffer_allowed = None
         # precompile struct operator
         self.struct_int = struct.Struct('i')
         self.max_level = (2.0**31)-1
         self.gen_functions = (
-          self.sine_function,
-          self.triangle_function,
-          self.square_function,
-          self.sawtooth_function
+            self.sine_function,
+            self.triangle_function,
+            self.square_function,
+            self.sawtooth_function
         )
         if 0:
             self.main_color = gtk.gdk.color_parse('#c04040')
@@ -360,7 +360,10 @@ class SignalGen:
             self.sig_color = Gdk.color_parse('#40c040')
             self.mod_color = Gdk.color_parse('#4040c0')
             self.noise_color = Gdk.color_parse('#c040c0')
-        self.player = None
+        if 0:
+            self.player = None
+        else:
+            self.pipeline = None
         self.bus = None
         self.count = 0
         self.imod = 0
@@ -417,7 +420,7 @@ class SignalGen:
           self.k_help_button: 'Visit the %s Web page' % self.title,
         }
         for k, v in self.tooltips.items():
-          k.set_tooltip_text(v)
+            k.set_tooltip_text(v)
         self.config_data = {
           'SampleRate': self.k_sample_rate_combobox,
           'LeftChannelEnabled': self.k_left_checkbutton,
@@ -449,15 +452,15 @@ class SignalGen:
         self.k_mod_level_entry.set_text(self.format_num(self.mod_level))
         self.k_noise_level_entry.set_text(self.format_num(self.noise_level))
         if 0:
-          self.k_main_viewport_border.modify_bg(gtk.STATE_NORMAL, self.main_color)
-          self.k_sig_viewport_border.modify_bg(gtk.STATE_NORMAL, self.sig_color)
-          self.k_mod_viewport_border.modify_bg(gtk.STATE_NORMAL, self.mod_color)
-          self.k_noise_viewport_border.modify_bg(gtk.STATE_NORMAL, self.noise_color)
+            self.k_main_viewport_border.modify_bg(gtk.STATE_NORMAL, self.main_color)
+            self.k_sig_viewport_border.modify_bg(gtk.STATE_NORMAL, self.sig_color)
+            self.k_mod_viewport_border.modify_bg(gtk.STATE_NORMAL, self.mod_color)
+            self.k_noise_viewport_border.modify_bg(gtk.STATE_NORMAL, self.noise_color)
         else:
-          self.k_main_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.main_color)
-          self.k_sig_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.sig_color)
-          self.k_mod_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.mod_color)
-          self.k_noise_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.noise_color)
+            self.k_main_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.main_color)
+            self.k_sig_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.sig_color)
+            self.k_mod_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.mod_color)
+            self.k_noise_viewport_border.modify_bg(Gtk.StateFlags.NORMAL, self.noise_color)
         self.sig_freq_cont = TextEntryController(self, self.k_sig_freq_entry)
         self.sig_level_cont = TextEntryController(self, self.k_sig_level_entry)
         self.mod_freq_cont = TextEntryController(self, self.k_mod_freq_entry)
@@ -548,24 +551,29 @@ class SignalGen:
     #   return target
 
     def unlink_gst(self):
-        if (self.player):
-            if 0:
+        if 0:
+            if (self.player):
                 self.player.set_state(gst.STATE_NULL)
                 self.player.remove_many(*self.chain)
                 gst.element_unlink_many(*self.chain)
-            else:
-                self.player.set_state(Gst.State.NULL)
             for src in self.chain[::-1]:
                 self.player.remove(src)
             for item in self.chain:
                 item = False
             self.player = None
-            time.sleep(0.01)
+        else:
+            if self.pipeline:
+                self.pipeline.set_state(Gst.State.NULL)
+                self.pipeline = None
+                time.sleep(0.01)
 
     def init_audio(self):
         self.unlink_gst()
         if(self.enable):
             self.chain = []
+            rs = int(SignalGen.sample_rates[self.sample_rate])
+            self.rate = float(rs)
+            self.interval = 1.0 / self.rate
             if 0:
                 self.player = gst.Pipeline("mypipeline")
                 self.source = self.make_and_chain("appsrc", "appsrc")
@@ -574,10 +582,14 @@ class SignalGen:
                     sys.exit(1)
                 self.source.set_property("is-live", True)
             else:
-                self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
-            rs = int(SignalGen.sample_rates[self.sample_rate])
-            self.rate = float(rs)
-            self.interval = 1.0 / self.rate
+                # inject the real rate
+                self.pipeline = self.PIPELINE_SIMPLE.format(rs)
+                # parse it
+                self.pipeline = Gst.parse_launch(self.pipeline)
+                self.appsrc = self.pipeline.get_by_name("appsrc")
+                self.appsrc.connect('need-data', self.need_data)
+
+           
             if 0:
                 caps = gst.Caps(
                   'audio/x-raw-int,'
@@ -626,8 +638,12 @@ class SignalGen:
                 print_pad_capabilities(self.sink, "sink")
             print('enabled the output player')
         else:
-            if self.player:
-                self.player.set_state(Gst.State.NULL)
+            if 0:
+                if self.player:
+                    self.player.set_state(Gst.State.NULL)
+            else:
+                if self.pipeline:
+                    self.pipeline.set_state(Gst.State.PAUSED)
 
     def key_event(self, w, evt):
         if 0:
@@ -659,75 +675,114 @@ class SignalGen:
             if debug:
                 print("Debug info:", debug)
         elif t == Gst.MessageType.STATE_CHANGED:
-            old_state, new_state, pending_state = message.parse_state_changed()
-            if message.src == self.source:
-                print("Pipeline state changed from '{0:s}' to '{1:s}'".format(
-                  Gst.Element.state_get_name(old_state),
-                  Gst.Element.state_get_name(new_state)))
-                print(self.sink)
-                print_pad_capabilities(self.sink, "sink")
+            if 0:
+                old_state, new_state, pending_state = message.parse_state_changed()
+                if message.src == self.source:
+                    print("Pipeline state changed from '{0:s}' to '{1:s}'".format(
+                        Gst.Element.state_get_name(old_state),
+                        Gst.Element.state_get_name(new_state)))
+                    print(self.sink)
+                    print_pad_capabilities(self.sink, "sink")
+            else:
+                pass
 
     def sine_function(self, t, f):
-        return math.sin(2.0*math.pi*f*t)
+        # return math.sin(2.0*math.pi*f*t)
+        return np.sin(2*np.pi*f*t).astype('<f4')
 
     def triangle_function(self, t, f):
-        q = 4*math.fmod(t*f, 1)
-        q = (q, 2-q)[q > 1]
-        return (q, -2-q)[q < -1]
+        q = 4*np.fmod(t*f, 1)
+        p = q > 1
+        q[p] = (2-q)[p]
+        p = q < -1
+        q[p] = (-2-q)[p]
+        return q
 
     def square_function(self, t, f):
-        if f == 0:
-            return 0
-        q = 0.5 - math.fmod(t*f, 1)
-        return (-1, 1)[q > 0]
+        q = -np.ones(t.shape)
+        p = (0.5 - np.fmod(t*f, 1)) > 0
+        q[p] = 1
+        return q
 
     def sawtooth_function(self, t, f):
-        return 2.0*math.fmod((t*f)+0.5, 1.0)-1.0
+        return 2.0*np.fmod((t*f)+0.5, 1.0)-1.0
 
     def need_data(self, src, length):
-        print("received a request for {0} elems".format(length))
+        print("received a request for {0} elems at t={1}".format(length, self.count*self.interval))
         self.is_push_buffer_allowed = True
 
         if 0:
             bytes = ""
-        else:
-            bytes = bytearray()  # we need a mutable object
+
         # sending two channels, so divide requested length by 2
         ld2 = int(.5 * length)
-        for tt in range(ld2):
-            t = (self.count + tt) * self.interval
-        if not self.mod_enable:
-            datum = self.sig_function(t, self.sig_freq)
-            # DEBUG print("datum is {0}".format(datum))
-        else:
-            mod = self.mod_function(t, self.mod_freq)
-        # AM mode
-        if(self.mod_mode == SignalGen.M_AM):
-            datum = 0.5 * self.sig_function(t, self.sig_freq) * (1.0 + (mod * self.mod_level))
-        # FM mode
-        else:
-            self.imod += (mod * self.mod_level * self.interval)
-            datum = self.sig_function(t+self.imod, self.sig_freq)
-        v = 0
-        if self.sig_enable:
-            v += (datum * self.sig_level)
-        if self.noise_enable:
-            noise = ((2.0 * random.random()) - 1.0)
-            v += noise * self.noise_level
-        v *= self.max_level
-        v = max(-self.max_level, v)
-        v = min(self.max_level, v)
-        # DEBUG print("generated signal is {0}".format(v))
-        left = round((0, v)[self.left_audio])
-        right = round((0, v)[self.right_audio])
-        # DEBUG print("Pushing ({0}, {1})".format(left, right))
-        bytes.extend(list(self.struct_int.pack(left)) +
-                     list(self.struct_int.pack(right)))
+
+        # previous approach: for loop
+        # for tt in range(ld2):
+        #    t = (self.count + tt) * self.interval
+
+        # new approach: vectorized
+        for tt in range(1):
+            t = np.linspace(self.count, self.count+ld2, ld2, endpoint=False) * self.interval
+            if not self.mod_enable:
+                datum = self.sig_function(t, self.sig_freq)
+                # DEBUG print("datum is {0}".format(datum))
+            else:
+                import pdb; pdb.set_trace()
+                mod = self.mod_function(t, self.mod_freq)
+                # AM mode
+                if(self.mod_mode == SignalGen.M_AM):
+                    datum = 0.5 * self.sig_function(t, self.sig_freq) * \
+                            (1.0 + (mod * self.mod_level))
+                # FM mode
+                else:
+                    self.imod += (mod * self.mod_level * self.interval)
+                    datum = self.sig_function(t+self.imod, self.sig_freq)
+            v = 0
+            if self.sig_enable:
+                v += (datum * self.sig_level)
+            if self.noise_enable:
+                noise = ((2.0 * np.random.random(t.shape)) - 1.0)
+                v += noise * self.noise_level
+            v *= self.max_level
+            if 0:
+                v = np.max(-self.max_level, v)
+                v = np.min(self.max_level, v)
+            else:
+                np.clip(v, -self.max_level, self.max_level, out=v)
+
+            # DEBUG print("generated signal is {0}".format(v))
+            if 0:
+                left = round((0, v)[self.left_audio])
+                right = round((0, v)[self.right_audio])
+            else:
+                if self.left_audio:
+                    left = np.round(v).astype('<i4')
+                else:
+                    left = np.zeros(v.shape, dtype=np.int32)
+                if self.right_audio:
+                    right = np.round(v).astype('<i4')
+                else:
+                    right = np.zeros(v.shape, dtype=np.int32)
+
+            # DEBUG print("Pushing ({0}, {1})".format(left, right))
+            if 0:
+                bytes.extend(list(self.struct_int.pack(left)) +
+                             list(self.struct_int.pack(right)))
+            else:
+                # create an interleaved version of the two vectors
+                bytes = np.vstack((left, right)).flatten('F')
         self.count += ld2
-        buffer = Gst.Buffer.new_wrapped(bytes)
-        # Create GstSample
-        samples = Gst.Sample.new(buffer, self.caps, None, None)
-        gst_flow_return = src.emit('push-sample', samples)
+
+        if 0:
+            buffer = Gst.Buffer.new_wrapped(bytes)
+            # Create GstSample
+            # samples = Gst.Sample.new(buffer, self.caps, None, None)
+        else:
+            buffer = Gst.Buffer.new_allocate(None, length * 4, None)
+            buffer.fill(0, bytes.tobytes())
+        # gst_flow_return = src.emit('push-sample', samples)
+        gst_flow_return = src.emit('push-buffer', buffer)
         if gst_flow_return != Gst.FlowReturn.OK:
             print('We got some error, stop sending data')
         else:

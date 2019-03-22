@@ -45,13 +45,13 @@ class Appsrc():
         self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
 
         self.buffer_size = 4096
-        self.num_buffer = 10
+        self.num_buffer = 64
         self.dt = 1.0/48000
         print(self.dt)
         self.arrayn = (1.0e-3*np.random.randn(self.num_buffer
                                                    * self.buffer_size, 1)).astype('<f4')
         self.npts = self.num_buffer * self.buffer_size
-        sine = ((2**12-1)*np.sin(2*np.pi*3400*np.linspace(0, self.npts, self.npts, endpoint=False)*self.dt)).astype('<i4')
+        sine = ((2**12-1)*np.sin(2*np.pi*412*np.linspace(0, self.npts, self.npts, endpoint=False)*self.dt)).astype('<i4')
         # generate two rows and emit as x(:)
         self.array = np.vstack((sine, sine)).flatten('F')
         ##    self.array = (1.0e-3*np.sin(2*np.pi*1200*np.linspace(0, npts, npts, endpoint=False)*self.dt)).astype('<f4')
@@ -121,6 +121,7 @@ if __name__ == "__main__":
         loop.quit()
 
     npts, dt, resu = appsrc.get_data()
+    resu = resu[::2]
     resu = resu/(2**31 - 1)
 
     x = np.linspace(0, npts, npts, endpoint=False)*dt
@@ -132,11 +133,13 @@ if __name__ == "__main__":
     import pdb; pdb.set_trace()
     plt.subplot(2, 1, 1)
     markers_on = np.linspace(0, npts, 10, endpoint=False).astype('i4')
-    plt.plot(x, resu, '-bD', markevery=markers_on)
+    # plt.plot(x, resu, '-bD', markevery=markers_on)
+    plt.plot(x[:1024], resu[:1024])
     plt.ylabel("Generated from Appsrc")
     plt.subplot(2, 1, 2)
-    plt.plot(x, wav)
+    plt.plot(x[:1024], wav[:1024])
     plt.ylabel("Sent to audio")
+    plt.savefig("Appsrc_out.png", bbox_inches='tight')
     plt.show()
 
     appsrc.stop()
