@@ -688,7 +688,7 @@ class SignalGen:
 
     def sine_function(self, t, f):
         # return math.sin(2.0*math.pi*f*t)
-        return np.sin(2*np.pi*f*t).astype('<f4')
+        return np.sin(2*np.pi*f*t)
 
     def triangle_function(self, t, f):
         q = 4*np.fmod(t*f, 1)
@@ -728,7 +728,6 @@ class SignalGen:
                 datum = self.sig_function(t, self.sig_freq)
                 # DEBUG print("datum is {0}".format(datum))
             else:
-                import pdb; pdb.set_trace()
                 mod = self.mod_function(t, self.mod_freq)
                 # AM mode
                 if(self.mod_mode == SignalGen.M_AM):
@@ -757,11 +756,11 @@ class SignalGen:
                 right = round((0, v)[self.right_audio])
             else:
                 if self.left_audio:
-                    left = np.round(v).astype('<i4')
+                    left = np.round(v).astype('>i4')
                 else:
                     left = np.zeros(v.shape, dtype=np.int32)
                 if self.right_audio:
-                    right = np.round(v).astype('<i4')
+                    right = np.round(v).astype('>i4')
                 else:
                     right = np.zeros(v.shape, dtype=np.int32)
 
