@@ -324,7 +324,7 @@ class SignalGen:
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=S32BE,channels=1,rate=48000 ! "
     # + "audioconvert ! audioresample ! autoaudiosink"
     PIPELINE_SIMPLE = "appsrc name=appsrc !" + \
-                      " audio/x-raw,format=S32BE,channels=2,layout=interleaved,rate={0} !" + \
+                      " audio/x-raw,format=S24_32BE,channels=2,layout=interleaved,rate={0} !" + \
                       " audioconvert ! audioresample ! autoaudiosink"
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! audio/x-raw,format=F32BE,channels=1,rate=48000 ! " +
     # "audioconvert ! audioresample ! autoaudiosink"
@@ -343,7 +343,10 @@ class SignalGen:
         self.is_push_buffer_allowed = None
         # precompile struct operator
         self.struct_int = struct.Struct('i')
+        # original code
         self.max_level = (2.0**31)-1
+        # this corresponds to 24 bits + sign
+        self.max_level = (2.0**24)-1
         self.gen_functions = (
             self.sine_function,
             self.triangle_function,
@@ -759,13 +762,15 @@ class SignalGen:
                 # dt = np.dtype('>i4')
                 # print(dt.byteorder)
                 if self.left_audio:
-                    left = np.round(v).astype('>i4')
+                    left = np.round(v)
+                    # left = v
                 else:
-                    left = np.zeros(v.shape, dtype=np.int32)
+                    left = np.zeros(v.shape, dtype=np.float32)
                 if self.right_audio:
-                    right = np.round(v).astype('>i4')
+                    right = np.round(v)
+                    # right = v
                 else:
-                    right = np.zeros(v.shape, dtype=np.int32)
+                    right = np.zeros(v.shape, dtype=np.float32)
 
             # DEBUG print("Pushing ({0}, {1})".format(left, right))
             if 0:
@@ -773,7 +778,7 @@ class SignalGen:
                              list(self.struct_int.pack(right)))
             else:
                 # create an interleaved version of the two vectors
-                bytes = np.vstack((left, right)).flatten('F')
+                bytes = np.vstack((left.astype('>i4'), right.astype('>i4'))).flatten('F')
         self.count += ld2
 
         if 0:
@@ -781,6 +786,7 @@ class SignalGen:
             # Create GstSample
             # samples = Gst.Sample.new(buffer, self.caps, None, None)
         else:
+            print("min is {0} and max is {1}".format(bytes.min(), bytes.max()))
             bytes = bytes.tobytes()
             buffer = Gst.Buffer.new_allocate(None, len(bytes), None)
             buffer.fill(0, bytes)
