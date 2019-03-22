@@ -315,8 +315,10 @@ class SignalGen:
     M_AM, M_FM = list(range(2))
     W_SINE, W_TRIANGLE, W_SQUARE, W_SAWTOOTH = list(range(4))
     waveform_strings = ('Sine', 'Triangle', 'Square', 'Sawtooth')
-    R_48000, R_44100, R_22050, R_16000, R_11025, R_8000, R_4000 = list(range(7))
-    sample_rates = ('48000', '44100', '22050', '16000', '11025', '8000', '4000')
+    R_192000, R92000, R_48000, R_44100, R_32000, R_22050, R_16000, R_11025, \
+        R_8000, R_4000 = list(range(10))
+    sample_rates = ('192000', '96000', '48000', '44100', '32000', '22050', '16000', '11025',
+                    '8000', '4000')
 
     # PIPELINE_SIMPLE = "appsrc name=appsrc ! " +
     # "audio/x-raw,format=S32BE,channels=2,rate=48000,layout=interleaved ! audioconvert !" +
