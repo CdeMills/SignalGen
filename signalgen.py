@@ -347,8 +347,8 @@ class SignalGen:
         self.struct_int = struct.Struct('i')
         # original code
         self.max_level = (2.0**31)-1
-        # this corresponds to 24 bits + sign
-        self.max_level = (2.0**24)-1
+        # this corresponds to 24 bits with sign
+        self.max_level = (2.0**23)-1
         self.gen_functions = (
             self.sine_function,
             self.triangle_function,
@@ -713,7 +713,8 @@ class SignalGen:
         return 2.0*np.fmod((t*f)+0.5, 1.0)-1.0
 
     def need_data(self, src, length):
-        print("received a request for {0} elems at t={1}".format(length, self.count*self.interval))
+        # DEBUG print("received a request for {0} elems at t={1}".
+        # format(length, self.count*self.interval))
         self.is_push_buffer_allowed = True
 
         if 0:
@@ -788,7 +789,7 @@ class SignalGen:
             # Create GstSample
             # samples = Gst.Sample.new(buffer, self.caps, None, None)
         else:
-            print("min is {0} and max is {1}".format(bytes.min(), bytes.max()))
+            # DEBUG print("min is {0} and max is {1}".format(bytes.min(), bytes.max()))
             bytes = bytes.tobytes()
             buffer = Gst.Buffer.new_allocate(None, len(bytes), None)
             buffer.fill(0, bytes)
@@ -796,8 +797,8 @@ class SignalGen:
         gst_flow_return = src.emit('push-buffer', buffer)
         if gst_flow_return != Gst.FlowReturn.OK:
             print('We got some error, stop sending data')
-        else:
-            print('src.emit returned {0}'.format(gst_flow_return))
+        # DEBUG else:
+        # DEBUG     print('src.emit returned {0}'.format(gst_flow_return))
 
     def enough_data(self, src):
         self.is_push_buffer_allowed = False
