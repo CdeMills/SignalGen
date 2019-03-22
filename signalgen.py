@@ -755,6 +755,9 @@ class SignalGen:
                 left = round((0, v)[self.left_audio])
                 right = round((0, v)[self.right_audio])
             else:
+                # to check:
+                # dt = np.dtype('>i4')
+                # print(dt.byteorder)
                 if self.left_audio:
                     left = np.round(v).astype('>i4')
                 else:
@@ -778,8 +781,9 @@ class SignalGen:
             # Create GstSample
             # samples = Gst.Sample.new(buffer, self.caps, None, None)
         else:
-            buffer = Gst.Buffer.new_allocate(None, length * 4, None)
-            buffer.fill(0, bytes.tobytes())
+            bytes = bytes.tobytes()
+            buffer = Gst.Buffer.new_allocate(None, len(bytes), None)
+            buffer.fill(0, bytes)
         # gst_flow_return = src.emit('push-sample', samples)
         gst_flow_return = src.emit('push-buffer', buffer)
         if gst_flow_return != Gst.FlowReturn.OK:
