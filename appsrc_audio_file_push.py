@@ -42,13 +42,13 @@ class Appsrc():
     def __init__(self):
         self.pipeline = Gst.parse_launch(self.PIPELINE_SIMPLE)
 
-        self.buffer_size = 4096
+        self.buffer_size = 4800
         self.num_buffer = 64
         self.arrayn = ((2**28-1)*np.random.randn(self.num_buffer
                                                  * self.buffer_size, 1)).astype('<i4')
         self.npts = self.num_buffer * self.buffer_size
         self.dt = 1.0/48000
-        self.array = ((2**28-1)*np.sin((2*np.pi*412*self.dt) *
+        self.array = ((2**6-1)*np.sin((2*np.pi*412*self.dt) *
                                        np.linspace(0, self.npts, self.npts, endpoint=False))).astype('<i4')
         self.needs_update = None
         self.the_buf = 0
@@ -100,7 +100,7 @@ class Appsrc():
 
     def get_data(self):
         """ Return the internal buffer"""
-        return (self.npts, self.dt, self.array)
+        return (self.buffer_size, self.npts, self.dt, self.array)
 
 
 if __name__ == "__main__":
@@ -115,19 +115,19 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         loop.quit()
 
-    npts, dt, resu = appsrc.get_data()
+    bufsz, npts, dt, resu = appsrc.get_data()
     resu = resu/(2**31 - 1)
 
-    x = np.linspace(0, npts, npts, endpoint=False)*dt
+    x = np.linspace(0, bufsz, bufsz, endpoint=False)*dt
 
     # compare with output.raw
-    wav = np.fromfile('output.raw', dtype='<i4', count=-1)
+    wav = np.fromfile('output.raw', dtype='<i4', count=bufsz)
     wav = wav / (2**31 - 1)
 
-    import pdb; pdb.set_trace()
     plt.subplot(2, 1, 1)
-    markers_on = np.linspace(0, npts, 10, endpoint=False).astype('i4')
-    plt.plot(x, resu, '-bD', markevery=markers_on)
+    # markers_on = np.linspace(0, npts, 10, endpoint=False).astype('i4')
+    # plt.plot(x, resu[:bufsz], '-bD', markevery=markers_on)
+    plt.plot(x, resu[:bufsz])
     plt.ylabel("Generated from Appsrc")
     plt.subplot(2, 1, 2)
     plt.plot(x, wav)
